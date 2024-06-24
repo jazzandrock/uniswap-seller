@@ -53,6 +53,14 @@ contract UniswapSell {
         amountOut = numerator / denominator;
     }
 
+    function getAmountIn(uint amountOut, uint reserveIn, uint reserveOut) internal pure returns (uint amountIn) {
+        require(amountOut > 0, 'UniswapV2Library: INSUFFICIENT_OUTPUT_AMOUNT');
+        require(reserveIn > 0 && reserveOut > 0, 'UniswapV2Library: INSUFFICIENT_LIQUIDITY');
+        uint numerator = reserveIn * amountOut * 1000;
+        uint denominator = (reserveOut - amountOut) * 997;
+        amountIn = (numerator / denominator) + 1;
+    }
+
     function sell_token0(uint256 amountIn) external {
         address token0 = pair.token0();
         IERC20(token0).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -71,30 +79,28 @@ contract UniswapSell {
         address token0 = pair.token0();
         address token1 = pair.token1();
         (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
-
-        uint amount0Out = 0;
-        uint amount1Out = 0;
         
-        if (totalToken0In > 0) {
-            amount1Out = getAmountOut(totalToken0In, reserve0, reserve1);
-        }
-        if (totalToken1In > 0) {
-            amount0Out = getAmountOut(totalToken1In, reserve1, reserve0);
-        }
+        uint initAmount0Out = getAmountOut(totalToken0In, reserve1, reserve0);
+        uint initAmount1Out = getAmountOut(totalToken1In, reserve0, reserve1);
 
-        if (totalToken0In > 0) {
-            IERC20(token0).safeTransfer(address(pair), totalToken0In);
+        if (totalToken1In < initAmount0Out) {
+            totalToken0In -= getAmountIn(totalToken1In, reserve1, reserve0);
+            totalToken1In = 0;
+            uint amount0Out = getAmountOut(totalToken0In, reserve1, reserve0);
+            IERC20(token1).safeTransfer(address(pair), totalToken0In);
+            pair.swap(amount0Out, 0, address(this), "");
+        } else if (totalToken0In < initAmount1Out) {
+            totalToken1In -= getAmountIn(totalToken0In, reserve0, reserve1);
+            totalToken0In = 0;
+            uint amount1Out = getAmountOut(totalToken1In, reserve0, reserve1);
+            IERC20(token0).safeTransfer(address(pair), totalToken1In);
+            pair.swap(0, amount1Out, address(this), "");
         }
-        if (totalToken1In > 0) {
-            IERC20(token1).safeTransfer(address(pair), totalToken1In);
-        }
-
-        pair.swap(amount0Out, amount1Out, address(this), "");
-
-        distributeFunds();
 
         totalToken0In = 0;
         totalToken1In = 0;
+
+        distributeFunds();
     }
 
     function distributeFunds() internal {
